@@ -99,17 +99,17 @@ def extract_structured_evidence(resume_text):
     )
 
     response = ollama.chat(
-        model='qwen3:8b',
+        model='qwen2.5:3b-instruct',
         messages=[
             {'role': 'system', 'content': system_prompt},
             {'role': 'user', 'content': f"Resume Text:\n{resume_text}"}
         ],
         format='json',
-        think=False,   # Qwen3 thinks by default, which eats into num_predict and can starve
-                       # the actual JSON output on longer documents — disable it here.
+        # No think=False here — qwen2.5 doesn't have qwen3's thinking-token mode,
+        # so there's nothing to disable.
         options={
             'temperature': 0.0,
-            'num_predict': 4096   # Raised from 2500 now that thinking tokens aren't competing for budget
+            'num_predict': 4096
         }
     )
 

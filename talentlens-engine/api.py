@@ -15,6 +15,7 @@ Run locally with: uvicorn api:app --reload
 
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -22,10 +23,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import db
+from common import new_id
 from extractor import ingest_resume
 from jd_extractor import ingest_jd
 from scorer import calculate_job_fit
 from role_resolver import resolve_role
+
+# Ollama serves requests over HTTP, so ingestion/scoring calls are I/O-bound — a thread pool
+# lets several run concurrently even though each individual call is a normal blocking function.
+# This does NOT by itself guarantee the Ollama *server* processes them in parallel — check
+# OLLAMA_NUM_PARALLEL (and that you have RAM headroom for it) if wall-clock time doesn't improve.
+MAX_WORKERS = int(os.environ.get("TALENTLENS_MAX_WORKERS", "4"))
 
 app = FastAPI(title="TalentLens Resume Analyzer")
 
@@ -100,27 +108,40 @@ def get_jd(role_id: str):
 
 @app.post("/resumes/upload")
 def upload_resumes(files: List[UploadFile] = File(...)):
-    """Batch upload — individual file failures don't stop the rest (per Phase 2 design)."""
-    results = []
-    for file in files:
+    """Batch upload — individual file failures don't stop the rest (per Phase 2 design).
+    Files are ingested concurrently rather than one-by-one, since each ingestion is
+    dominated by waiting on Ollama, not CPU work on this side."""
+
+    # Validate + save synchronously first (fast, and keeps UploadFile handling on the main thread).
+    to_process = []  # (file_name, saved_path)
+    results = [None] * len(files)
+    for i, file in enumerate(files):
         ext = os.path.splitext(file.filename)[1].lower()
         if ext not in (".pdf", ".docx"):
-            results.append({"file_name": file.filename, "status": "failed", "error": f"Unsupported file type: {ext}"})
+            results[i] = {"file_name": file.filename, "status": "failed", "error": f"Unsupported file type: {ext}"}
             continue
+        path = _save_upload(file, STORAGE_RESUMES)
+        to_process.append((i, file.filename, path))
 
+    def _process(item):
+        i, file_name, path = item
         try:
-            path = _save_upload(file, STORAGE_RESUMES)
             record = ingest_resume(path)
             db.insert_resume(record)
-            results.append({
-                "file_name": file.filename,
+            return i, {
+                "file_name": file_name,
                 "status": "ok",
                 "candidate_id": record["candidate_id"],
                 "candidate_name": record.get("candidate_name", ""),
                 "extraction_warnings": record["extraction_warnings"],
-            })
+            }
         except Exception as e:
-            results.append({"file_name": file.filename, "status": "failed", "error": str(e)})
+            return i, {"file_name": file_name, "status": "failed", "error": str(e)}
+
+    if to_process:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            for i, outcome in pool.map(_process, to_process):
+                results[i] = outcome
 
     return {"results": results}
 
@@ -154,22 +175,21 @@ def analyze(req: AnalyzeRequest):
     if not resumes:
         raise HTTPException(404, "No resumes found to analyze (upload resumes first, or check candidate_ids).")
 
-    # Every /analyze run redefines this role's results from scratch — otherwise scores from
-    # earlier runs (including ones scoped to a different, smaller candidate batch) stay in the
-    # table forever and GET /results/{role_id} shows a mix of candidates from multiple runs.
-    db.delete_scores_for_role(role["role_id"])
+    run_id = new_id()  # ties every score from this /analyze call together as one run
 
-    scored_results = []
-    for resume in resumes:
+    def _score(resume):
         result = calculate_job_fit(resume, jd_data)
-        db.insert_score(resume["candidate_id"], role["role_id"], result)
-        scored_results.append({
+        db.insert_score(resume["candidate_id"], role["role_id"], run_id, result)
+        return {
             "candidate_id": resume["candidate_id"],
             "candidate_name": resume.get("candidate_name", ""),
             "final_score": result["final_score"],
             "hard_gate_failed": result["hard_gate_failed"],
             "hard_gate_reason": result["hard_gate_reason"],
-        })
+        }
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        scored_results = list(pool.map(_score, resumes))
 
     scored_results.sort(key=lambda r: r["final_score"], reverse=True)
     ranked = [r for r in scored_results if not r["hard_gate_failed"]]

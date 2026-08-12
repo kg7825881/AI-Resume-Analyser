@@ -38,13 +38,12 @@ def extract_structured_jd(jd_text):
     )
 
     response = ollama.chat(
-        model='qwen3:8b',
+        model='qwen2.5:3b-instruct',
         messages=[
             {'role': 'system', 'content': system_prompt},
             {'role': 'user', 'content': f"Job Description Text:\n{jd_text}"}
         ],
         format='json',
-        think=False,   # see extractor.py — Qwen3 thinking tokens were starving the JSON output
         options={
             'temperature': 0.0,
             'num_predict': 4096

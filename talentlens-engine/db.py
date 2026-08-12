@@ -59,6 +59,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 candidate_id TEXT,
                 role_id TEXT,
+                run_id TEXT,
                 category_scores TEXT,
                 final_score REAL,
                 hard_gate_failed INTEGER,
@@ -70,7 +71,10 @@ def init_db():
 
 @contextmanager
 def _connect():
-    conn = sqlite3.connect(DB_PATH)
+    # timeout: with parallel resume ingestion/scoring, multiple threads may write around
+    # the same time — without a timeout, SQLite raises "database is locked" immediately
+    # instead of waiting briefly for the other writer to finish.
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -119,22 +123,16 @@ def insert_resume(record: dict):
         ))
 
 
-def insert_score(candidate_id: str, role_id: str, result: dict):
+def insert_score(candidate_id: str, role_id: str, run_id: str, result: dict):
     with _connect() as conn:
         conn.execute("""
-            INSERT INTO scores (candidate_id, role_id, category_scores, final_score,
+            INSERT INTO scores (candidate_id, role_id, run_id, category_scores, final_score,
                                  hard_gate_failed, hard_gate_reason, scored_at)
-            VALUES (?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?)
         """, (
-            candidate_id, role_id, json.dumps(result["category_scores"]), result["final_score"],
+            candidate_id, role_id, run_id, json.dumps(result["category_scores"]), result["final_score"],
             int(result["hard_gate_failed"]), result["hard_gate_reason"], result["scored_at"],
         ))
-
-def delete_scores_for_role(role_id: str):
-    """Wipes prior scores for a role before a fresh /analyze run, so GET /results/{role_id}
-    always reflects only the most recent analysis — not an accumulation across every run."""
-    with _connect() as conn:
-        conn.execute("DELETE FROM scores WHERE role_id = ?", (role_id,))
 
 
 def get_all_roles() -> list[dict]:
@@ -178,13 +176,23 @@ def _row_to_resume_dict(row) -> dict:
 
 def get_scores_by_role(role_id: str) -> list[dict]:
     with _connect() as conn:
+        # Only the most recent /analyze run for this role — otherwise re-running analysis
+        # (even with an overlapping or different candidate set) would pile every historical
+        # score row on top of the previous ones, showing candidates from old runs too.
+        latest_run = conn.execute(
+            "SELECT run_id FROM scores WHERE role_id = ? ORDER BY scored_at DESC LIMIT 1", (role_id,)
+        ).fetchone()
+        if not latest_run:
+            return []
+        run_id = latest_run["run_id"]
+
         rows = conn.execute("""
             SELECT s.*, r.candidate_name, r.file_name, r.skills, r.total_years_experience,
                    r.experience, r.education, r.certifications, r.projects
             FROM scores s JOIN resumes r ON s.candidate_id = r.candidate_id
-            WHERE s.role_id = ?
+            WHERE s.role_id = ? AND s.run_id = ?
             ORDER BY s.final_score DESC
-        """, (role_id,)).fetchall()
+        """, (role_id, run_id)).fetchall()
         results = []
         for row in rows:
             d = dict(row)

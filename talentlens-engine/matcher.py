@@ -7,29 +7,56 @@ previous whole-JD-blob comparison.
 """
 
 import math
+import threading
 import ollama
+
+EMBED_MODEL = "nomic-embed-text"
 
 # Cosine similarity thresholds for the semantic match band.
 # Below SEM_LOW -> no match (0.0). Above SEM_HIGH -> top of band (0.9).
 # Between the two -> linearly interpolated between 0.6 and 0.9.
-# Threshold band for short SKILL-TO-SKILL matching (e.g. "Docker" vs "Docker", or vs another
-# short skill phrase). Single terms compared to single terms sit in a higher cosine range.
-SEM_LOW = 0.55
-SEM_HIGH = 0.80
+#
+# Calibrated for nomic-embed-text via calibrate_embeddings.py (2026-08-12) against real
+# skill-pair and JD/resume-text-pair data. Non-match skill pairs (Docker/Kubernetes,
+# Python/Adobe Photoshop) both landed ~0.42; genuine semantic match (Machine Learning/
+# Deep Learning) landed at 0.699 — SEM_LOW/HIGH bracket that with margin. Free-text
+# irrelevant pair landed at 0.396 vs. relevant pairs at 0.562/0.591 — note those last two
+# are close together, so TEXT_SIM_LOW/HIGH mainly separates "irrelevant" from "relevant",
+# not "partially" from "fully" relevant; revisit with more sample pairs if the
+# projects/experience category ever looks miscalibrated in practice.
+SEM_LOW = 0.46
+SEM_HIGH = 0.70
+TEXT_SIM_LOW = 0.43
+TEXT_SIM_HIGH = 0.60
 
-# Threshold band for FREE-TEXT comparisons (a short JD phrase/role description vs a full
-# paragraph-length project or experience description). Comparing short text to long text
-# naturally produces lower cosine similarity regardless of actual relevance, so this band
-# is intentionally lower — reusing the bounds already empirically found to work for this
-# embedding model in the original calibrate_score() implementation.
-TEXT_SIM_LOW = 0.35
-TEXT_SIM_HIGH = 0.65
+# --- Embedding cache ---
+# The same strings (JD skills, common candidate skills like "Python") get embedded
+# repeatedly — once per candidate scored, sometimes multiple times per candidate.
+# Caching by exact text avoids re-querying Ollama for identical input, which is a
+# meaningful chunk of the redundant work in a batch scoring run.
+_embedding_cache: dict[str, list[float]] = {}
+_cache_lock = threading.Lock()
 
 
 def get_embedding(text: str) -> list[float]:
-    """Generates a vector embedding for a string using the local Qwen embedding model."""
-    response = ollama.embeddings(model='qwen3-embedding:8b', prompt=text)
-    return response['embedding']
+    """Generates (or returns a cached) vector embedding for a string via the local embedding model."""
+    with _cache_lock:
+        cached = _embedding_cache.get(text)
+    if cached is not None:
+        return cached
+
+    response = ollama.embeddings(model=EMBED_MODEL, prompt=text)
+    vec = response["embedding"]
+
+    with _cache_lock:
+        _embedding_cache[text] = vec
+    return vec
+
+
+def cache_stats() -> dict:
+    """Useful for confirming the cache is actually being hit during a batch run."""
+    with _cache_lock:
+        return {"cached_strings": len(_embedding_cache)}
 
 
 def cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
