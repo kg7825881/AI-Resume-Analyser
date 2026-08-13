@@ -13,7 +13,7 @@ and hard_gate_reason for explainability.
 """
 
 from datetime import datetime, timezone
-from matcher import score_skill_list, semantic_similarity_score, get_embedding
+from matcher import score_skill_list, semantic_similarity_score, get_embedding, evidence_status
 
 WEIGHTS = {
     "mandatory_skills": 0.35,
@@ -127,20 +127,66 @@ def _norm(s: str) -> str:
     return (s or "").strip().lower()
 
 
+def _build_evidence(category_key: str, result: dict) -> list[dict]:
+    """
+    Converts one score_skill_list result into the per-skill rows an evidence UI renders
+    directly: skill name, 3-state status (matched/weak_match/missing) for
+    green/amber/red styling, and — when matched — which candidate skill it matched
+    against, so HR can see e.g. "required: Kubernetes -> candidate has: Docker"
+    for a semantic match rather than just a bare checkmark.
+    """
+    rows = []
+    for r in result["results"]:
+        rows.append({
+            "skill": r["skill"],
+            "status": evidence_status(r),
+            "match_type": r["match_type"],
+            "matched_against": r.get("matched_against"),
+            "contribution": r["contribution"],
+        })
+    return rows
+
+
+def _extra_candidate_skills(candidate_skills: list[str], *results: dict) -> list[str]:
+    """
+    Candidate skills that weren't consumed as a matched_against by any requirement across
+    all categories passed in. Shown as a neutral/gray 'additional skills' bucket in the
+    evidence view — not required by the JD, but useful context (e.g. shows breadth, or a
+    tool that might matter for a different req down the line). Case-insensitive comparison
+    since matched_against preserves the candidate's original casing.
+    """
+    used = set()
+    for result in results:
+        for r in result["results"]:
+            if r.get("matched_against"):
+                used.add(r["matched_against"].strip().lower())
+    return [s for s in candidate_skills if s.strip().lower() not in used]
+
+
 def calculate_job_fit(candidate_data: dict, jd_data: dict, embed_fn=get_embedding) -> dict:
     """
     Main scoring entry point. Takes structured candidate + JD data (from extractor.py /
     jd_extractor.py) and returns a full score record per the Phase 1 schema.
     """
-    candidate_skills = candidate_data.get("skills", [])
+    # skills_all_sources (built by extractor.py's _aggregate_skills) merges the resume's own
+    # Skills-section list with every technologies_used entry from experience roles and projects.
+    # Matching against just "skills" misses tools a candidate demonstrably used on the job but
+    # didn't also relist in a dedicated Skills section (e.g. Docker/Kubernetes/RAG mentioned only
+    # under a specific role's Tools line). Falls back to "skills" for older records that predate
+    # skills_all_sources.
+    candidate_skills = candidate_data.get("skills_all_sources") or candidate_data.get("skills", [])
 
     # --- Mandatory Skills (with hard gate) ---
     mandatory_result = score_skill_list(jd_data.get("mandatory_skills", []), candidate_skills, embed_fn)
     mandatory_score = mandatory_result["average_contribution"] * WEIGHTS["mandatory_skills"] * 100
-    missing_mandatory = mandatory_result["missing"]
-    hard_gate_failed = len(missing_mandatory) > HARD_GATE_MAX_MISSING_MANDATORY
+    # Gate on gate_missing, not missing: a weak semantic match (contribution as low as 0.6,
+    # barely above the calibrated noise floor) still counts as "not missing" for score purposes,
+    # but shouldn't be able to single-handedly satisfy a hard mandatory-skill gate the way an
+    # exact or confident match does. See GATE_MIN_CONTRIBUTION in matcher.py.
+    gate_missing_mandatory = mandatory_result["gate_missing"]
+    hard_gate_failed = len(gate_missing_mandatory) > HARD_GATE_MAX_MISSING_MANDATORY
     hard_gate_reason = (
-        f"Missing {len(missing_mandatory)} mandatory skills: {', '.join(missing_mandatory)}"
+        f"Missing {len(gate_missing_mandatory)} mandatory skills (below gate confidence): {', '.join(gate_missing_mandatory)}"
         if hard_gate_failed else ""
     )
 
@@ -169,7 +215,10 @@ def calculate_job_fit(candidate_data: dict, jd_data: dict, embed_fn=get_embeddin
 
     category_scores = {
         "mandatory_skills": {
-            "score": round(mandatory_score, 2), "matched": mandatory_result["matched"], "missing": missing_mandatory,
+            "score": round(mandatory_score, 2),
+            "matched": mandatory_result["matched"],
+            "missing": mandatory_result["missing"],          # zero-contribution skills, for display
+            "gate_missing": gate_missing_mandatory,           # zero OR weak-below-threshold, drove the gate decision
         },
         "relevant_experience": {"score": experience_score, "notes": experience_notes},
         "technical_preferred_skills": {
@@ -183,8 +232,23 @@ def calculate_job_fit(candidate_data: dict, jd_data: dict, embed_fn=get_embeddin
 
     final_score = round(sum(c["score"] for c in category_scores.values()), 2)
 
+    # Evidence view for HR-facing candidate detail pages: per-category matched/weak/missing
+    # rows with 3-state status for green/amber/red display, plus a neutral "extra skills"
+    # bucket for candidate skills the JD never asked about. Built from the same per-skill
+    # results already computed above — no extra scoring work, just reshaped for display.
+    evidence = {
+        "mandatory_skills": _build_evidence("mandatory_skills", mandatory_result),
+        "technical_preferred_skills": _build_evidence("technical_preferred_skills", tech_result),
+        "preferred_skills_soft": _build_evidence("preferred_skills_soft", soft_result),
+        "certifications_other": _build_evidence("certifications_other", cert_result),
+        "additional_candidate_skills": _extra_candidate_skills(
+            candidate_skills, mandatory_result, tech_result, soft_result
+        ),
+    }
+
     return {
         "category_scores": category_scores,
+        "evidence": evidence,
         "final_score": final_score,
         "hard_gate_failed": hard_gate_failed,
         "hard_gate_reason": hard_gate_reason,

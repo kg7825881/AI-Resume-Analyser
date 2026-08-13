@@ -13,6 +13,7 @@ No auth — built for a single internal HR user against the Next.js frontend.
 Run locally with: uvicorn api:app --reload
 """
 
+import json
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +21,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import db
@@ -109,26 +111,42 @@ def get_jd(role_id: str):
 @app.post("/resumes/upload")
 def upload_resumes(files: List[UploadFile] = File(...)):
     """Batch upload — individual file failures don't stop the rest (per Phase 2 design).
-    Files are ingested concurrently rather than one-by-one, since each ingestion is
-    dominated by waiting on Ollama, not CPU work on this side."""
+    Streams results back as newline-delimited JSON (NDJSON) so the frontend can add each
+    candidate to the list the moment ITS ingestion finishes, instead of waiting for the
+    entire batch. Files are still ingested concurrently — this changes *when the client
+    finds out*, not the concurrency itself (that was already fixed).
 
-    # Validate + save synchronously first (fast, and keeps UploadFile handling on the main thread).
+    Response shape: one JSON object per line —
+      {"type": "meta", "total": N}                                   — sent first
+      {"type": "result", "file_name": ..., "status": "ok"|"failed", ...}  — one per file,
+                                                                            in COMPLETION order,
+                                                                            not upload order.
+    """
+
+    # Validate + save synchronously first (fast, and keeps UploadFile handling on the main
+    # thread — file.read() isn't safe to call concurrently from a worker thread).
     to_process = []  # (file_name, saved_path)
-    results = [None] * len(files)
-    for i, file in enumerate(files):
+    immediate_failures = []
+    for file in files:
         ext = os.path.splitext(file.filename)[1].lower()
         if ext not in (".pdf", ".docx"):
-            results[i] = {"file_name": file.filename, "status": "failed", "error": f"Unsupported file type: {ext}"}
+            immediate_failures.append({
+                "type": "result", "file_name": file.filename,
+                "status": "failed", "error": f"Unsupported file type: {ext}",
+            })
             continue
         path = _save_upload(file, STORAGE_RESUMES)
-        to_process.append((i, file.filename, path))
+        to_process.append((file.filename, path))
+
+    total = len(files)
 
     def _process(item):
-        i, file_name, path = item
+        file_name, path = item
         try:
             record = ingest_resume(path)
             db.insert_resume(record)
-            return i, {
+            return {
+                "type": "result",
                 "file_name": file_name,
                 "status": "ok",
                 "candidate_id": record["candidate_id"],
@@ -136,14 +154,23 @@ def upload_resumes(files: List[UploadFile] = File(...)):
                 "extraction_warnings": record["extraction_warnings"],
             }
         except Exception as e:
-            return i, {"file_name": file_name, "status": "failed", "error": str(e)}
+            return {"type": "result", "file_name": file_name, "status": "failed", "error": str(e)}
 
-    if to_process:
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            for i, outcome in pool.map(_process, to_process):
-                results[i] = outcome
+    def stream():
+        yield json.dumps({"type": "meta", "total": total}) + "\n"
 
-    return {"results": results}
+        for failure in immediate_failures:
+            yield json.dumps(failure) + "\n"
+
+        if to_process:
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+                futures = [pool.submit(_process, item) for item in to_process]
+                # as_completed yields whichever finishes first — that's the whole point:
+                # a fast resume shouldn't wait behind a slow one before reaching the client.
+                for future in as_completed(futures):
+                    yield json.dumps(future.result()) + "\n"
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 
 # --- Analyze ---

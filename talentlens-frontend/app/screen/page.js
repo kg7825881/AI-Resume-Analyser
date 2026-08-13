@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { uploadJD, listJDs, uploadResumes, analyze, getResults, getJD } from "../../lib/api";
+import { uploadJD, listJDs, uploadResumesStreaming, analyze, getResults, getJD } from "../../lib/api";
 import { useAppState, useToast } from "../providers";
 import JDSummaryCard from "../../components/JDSummaryCard";
 
@@ -29,8 +29,9 @@ export default function ScreenPage() {
   const [jdFullLoading, setJdFullLoading] = useState(false);
 
   const [resumeFiles, setResumeFiles] = useState([]);
-  const [resumeResults, setResumeResults] = useState([]); // per-file upload status
+  const [resumeResults, setResumeResults] = useState([]); // per-file upload status, appended as each one finishes
   const [resumesUploading, setResumesUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
 
   const [analyzing, setAnalyzing] = useState(false);
   const [activeStepIndex, setActiveStepIndex] = useState(-1); // -1 = idle
@@ -105,11 +106,25 @@ export default function ScreenPage() {
     if (!files.length) return;
     setResumeFiles((prev) => [...prev, ...files]);
     setResumesUploading(true);
+    setUploadProgress({ done: 0, total: files.length });
+
+    let okCount = 0;
+    let failCount = 0;
+
     try {
-      const { results } = await uploadResumes(files);
-      setResumeResults((prev) => [...prev, ...results]);
-      const okCount = results.filter((r) => r.status === "ok").length;
-      const failCount = results.length - okCount;
+      await uploadResumesStreaming(files, (msg) => {
+        if (msg.type === "meta") {
+          setUploadProgress({ done: 0, total: msg.total });
+          return;
+        }
+        // msg.type === "result" — arrives the moment THIS file finishes, not the whole batch.
+        // Results can arrive out of upload order (fastest resume first), by design.
+        setResumeResults((prev) => [...prev, msg]);
+        setUploadProgress((p) => ({ ...p, done: p.done + 1 }));
+        if (msg.status === "ok") okCount += 1;
+        else failCount += 1;
+      });
+
       toast(
         failCount
           ? `${okCount} resume(s) ready, ${failCount} failed to process`
@@ -131,6 +146,7 @@ export default function ScreenPage() {
   function clearResumeBatch() {
     setResumeResults([]);
     setResumeFiles([]);
+    setUploadProgress({ done: 0, total: 0 });
     if (resumeInputRef.current) resumeInputRef.current.value = "";
   }
 
@@ -300,8 +316,12 @@ export default function ScreenPage() {
             <div className="head">
               <h3>2. Resume Batch</h3>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span className="tag">{resumeResults.length} resumes</span>
-                {resumeResults.length > 0 && (
+                <span className="tag">
+                  {resumesUploading
+                    ? `${uploadProgress.done}/${uploadProgress.total} processed`
+                    : `${resumeResults.length} resumes`}
+                </span>
+                {resumeResults.length > 0 && !resumesUploading && (
                   <button onClick={clearResumeBatch} style={{ fontSize: 11 }}>
                     Clear all
                   </button>
@@ -310,17 +330,29 @@ export default function ScreenPage() {
             </div>
             <div className="body">
               <div className="drop">
-                <strong>{resumesUploading ? "Uploading…" : "Drop resumes here"}</strong>
-                <small>PDF or DOCX · multiple files supported</small>
+                <strong>
+                  {resumesUploading
+                    ? `Processing ${uploadProgress.done}/${uploadProgress.total}…`
+                    : "Drop resumes here"}
+                </strong>
+                <small>PDF or DOCX · multiple files supported · results appear as each finishes</small>
                 <span className="fake">Choose resumes</span>
                 <input
                   ref={resumeInputRef}
                   type="file"
                   accept=".pdf,.docx"
                   multiple
+                  disabled={resumesUploading}
                   onChange={handleResumeUpload}
                 />
               </div>
+
+              {resumesUploading && uploadProgress.total > 0 && (
+                <div className="bar" style={{ marginTop: 14 }}>
+                  <i style={{ width: `${(uploadProgress.done / uploadProgress.total) * 100}%` }} />
+                </div>
+              )}
+
               <div className="files">
                 {resumeResults.map((r, i) => (
                   <div className="file" key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -339,7 +371,7 @@ export default function ScreenPage() {
                     </span>
                   </div>
                 ))}
-                {resumeResults.length === 0 && (
+                {resumeResults.length === 0 && !resumesUploading && (
                   <div className="muted" style={{ padding: "8px 0" }}>
                     No resumes queued yet — only what you add here gets analyzed.
                   </div>
