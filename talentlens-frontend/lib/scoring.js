@@ -23,6 +23,21 @@ export const CATEGORY_LABELS = {
   certifications_other: "Certifications",
 };
 
+// Shared 3-state status → accent color, used by the Evidence panel's sub-sections.
+// "weak_match" covers a semantic hit too soft to clear the hard-gate threshold
+// (see GATE_MIN_CONTRIBUTION in matcher.py) — distinct from a confident match.
+export const STATUS_COLOR = {
+  matched: "var(--g)",
+  weak_match: "#f5bd62",
+  missing: "var(--r)",
+};
+
+export const STATUS_ICON = {
+  matched: "✓",
+  weak_match: "~",
+  missing: "×",
+};
+
 export function statusFor(finalScore) {
   if (finalScore >= 90) return { key: "excellent", label: "Excellent Match" };
   if (finalScore >= 80) return { key: "strong", label: "Strong Match" };
@@ -81,7 +96,9 @@ export function mostRecentRole(record) {
   return experience.length > 0 ? experience[0] : null;
 }
 
-/** Flat list of { skill, matched: bool, category } across every skill-based category, for evidence panels. */
+/** Flat list of { skill, matched: bool, category } across every skill-based category, for evidence panels.
+ * Kept for any existing callers relying on the flat shape — evidenceSections() below is the
+ * richer replacement used by the Candidate Detail evidence panel. */
 export function evidenceList(record) {
   const cs = record.category_scores || {};
   const cats = [
@@ -100,6 +117,74 @@ export function evidenceList(record) {
     }
   }
   return items;
+}
+
+function mapSkillRow(r) {
+  return {
+    label: r.skill,
+    status: r.status, // "matched" | "weak_match" | "missing"
+    detail: r.matched_against ? `matched against: ${r.matched_against}` : null,
+    matchType: r.match_type, // "exact" | "semantic" | "none"
+  };
+}
+
+/**
+ * Structured evidence for the Candidate Detail page's Evidence panel, built from
+ * record.evidence (scorer.py's per-category itemized rows) rather than the flatter
+ * category_scores.matched/missing lists — this is what lets the panel show *why* a
+ * skill matched (exact vs. semantic, and against which candidate skill), plus the
+ * experience/projects/education rows that category_scores alone never carried.
+ *
+ * Shape:
+ * {
+ *   skillSections: [{ key, label, items: [{ label, status, detail, matchType }] }],
+ *   experience: { years: { total_years_experience, min_years_required, status } | null,
+ *                 roles: [{ label, detail, status, similarity }] },
+ *   projects: [{ label, status, similarity }],
+ *   education: [{ label, status }],
+ *   additionalSkills: string[],
+ * }
+ */
+export function evidenceSections(record) {
+  const ev = record.evidence || {};
+
+  const skillSections = [
+    { key: "mandatory_skills", label: "Mandatory skills", items: (ev.mandatory_skills || []).map(mapSkillRow) },
+    {
+      key: "technical_preferred_skills",
+      label: "Technical skills",
+      items: (ev.technical_preferred_skills || []).map(mapSkillRow),
+    },
+    { key: "preferred_skills_soft", label: "Preferred skills", items: (ev.preferred_skills_soft || []).map(mapSkillRow) },
+    { key: "certifications_other", label: "Certifications", items: (ev.certifications_other || []).map(mapSkillRow) },
+  ];
+
+  const experienceEv = ev.experience || {};
+  const experienceRoles = (experienceEv.roles || []).map((r) => ({
+    label: [r.title, r.company].filter(Boolean).join(" @ ") || "Role",
+    detail: r.duration,
+    status: r.status,
+    similarity: r.relevance_similarity,
+  }));
+
+  const projectItems = (ev.projects || []).map((p) => ({
+    label: p.title || "Project",
+    status: p.status,
+    similarity: p.relevance_similarity,
+  }));
+
+  const educationItems = (ev.education || []).map((e) => ({
+    label: [e.required_degree_level, e.required_field].filter(Boolean).join(" in ") || "Requirement",
+    status: e.status,
+  }));
+
+  return {
+    skillSections,
+    experience: { years: experienceEv.years || null, roles: experienceRoles },
+    projects: projectItems,
+    education: educationItems,
+    additionalSkills: ev.additional_candidate_skills || [],
+  };
 }
 
 export function formatEducation(education) {

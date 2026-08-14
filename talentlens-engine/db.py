@@ -61,12 +61,21 @@ def init_db():
                 role_id TEXT,
                 run_id TEXT,
                 category_scores TEXT,
+                evidence TEXT,
                 final_score REAL,
                 hard_gate_failed INTEGER,
                 hard_gate_reason TEXT,
                 scored_at TEXT
             )
         """)
+
+        # Migration: a talentlens.db created before this change has a "scores" table
+        # WITHOUT the evidence column — CREATE TABLE IF NOT EXISTS only applies to a
+        # brand-new table, it does nothing to an existing one with a different shape.
+        # This adds the column in place so existing databases don't need a manual reset.
+        existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(scores)").fetchall()}
+        if "evidence" not in existing_cols:
+            conn.execute("ALTER TABLE scores ADD COLUMN evidence TEXT")
 
 
 @contextmanager
@@ -126,11 +135,12 @@ def insert_resume(record: dict):
 def insert_score(candidate_id: str, role_id: str, run_id: str, result: dict):
     with _connect() as conn:
         conn.execute("""
-            INSERT INTO scores (candidate_id, role_id, run_id, category_scores, final_score,
+            INSERT INTO scores (candidate_id, role_id, run_id, category_scores, evidence, final_score,
                                  hard_gate_failed, hard_gate_reason, scored_at)
-            VALUES (?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?)
         """, (
-            candidate_id, role_id, run_id, json.dumps(result["category_scores"]), result["final_score"],
+            candidate_id, role_id, run_id, json.dumps(result["category_scores"]),
+            json.dumps(result.get("evidence", {})), result["final_score"],
             int(result["hard_gate_failed"]), result["hard_gate_reason"], result["scored_at"],
         ))
 
@@ -197,6 +207,9 @@ def get_scores_by_role(role_id: str) -> list[dict]:
         for row in rows:
             d = dict(row)
             d["category_scores"] = json.loads(d["category_scores"])
+            # Rows scored before the evidence column existed will have NULL here —
+            # fall back to an empty dict instead of crashing on json.loads(None).
+            d["evidence"] = json.loads(d["evidence"]) if d.get("evidence") else {}
             d["hard_gate_failed"] = bool(d["hard_gate_failed"])
             # Raw extracted resume fields — needed for the candidate comparison table,
             # not just the computed scores.

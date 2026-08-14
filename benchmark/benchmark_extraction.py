@@ -72,20 +72,140 @@ Return ONLY the JSON object.
 # --- Replace these with real resume text pulled from your samples folder ---
 SAMPLES = {
     "sample_1_short": """
-Priya Sharma
-Software Engineer with 3 years experience in Python and backend development.
-
-Skills: Python, FastAPI, PostgreSQL, Docker, REST APIs
-
-Experience:
-Backend Developer, TechCorp (2022-2025)
-- Built and maintained microservices handling 10k+ daily requests
-- Migrated legacy monolith to containerized services
-
-Education:
-B.Tech Computer Science, Delhi University, 2021
-
-Certifications: AWS Certified Developer Associate
+  "candidate_name": "VIBHUTI SHARMA",
+  "skills": [
+    "Data Scientist",
+    "Product Owner",
+    "AI Platform Development",
+    "MLOps",
+    "GenAI Platform Development",
+    "Agentic AI",
+    "OCR/Document Processing",
+    "Machine Learning",
+    "Computer Vision",
+    "Natural Language Processing (NLP)",
+    "Python",
+    "FastAPI",
+    "RAG",
+    "Azure OpenAI",
+    "Google ADK",
+    "Crew AI",
+    "DeepSeek",
+    "Stable Diffusion",
+    "GPT variants",
+    "Grok",
+    "LLMs",
+    "FAISS",
+    "Databricks",
+    "Snowflake",
+    "AWS S3",
+    "Azure Storage",
+    "GCP",
+    "SQL",
+    "GitHub",
+    "Numpy",
+    "Pandas",
+    "Scikit-learn",
+    "Tensorflow",
+    "Keras",
+    "H2O",
+    "Plotly",
+    "PySpark",
+    "MongoDB",
+    "Postgres",
+    "Docker",
+    "Selenium",
+    "BeautifulSoup",
+    "Deep Learning",
+    "Computer Vision",
+    "Statistical Analysis",
+    "Processing Large Datasets",
+    "Data Visualization"
+  ],
+  "total_years_experience": 10,
+  "experience": [
+    {
+      "title": "Team Lead in Data Science at UPL",
+      "company": "UPL Ltd",
+      "years": 7,
+      "domain": "Agentic AI, MLOps, OCR/Document Processing, Machine Learning, Computer Vision, Natural Language Processing (NLP)",
+      "description": "Led and hands-on developed the platform for UPL Genie, a secure enterprise GenAI platform. Designed, built, and rolled out platform RBAC, breaking down work into sprint-ready tasks and aligning teams on access rules for apps/features/data. Used adoption and usage analytics to reprioritise the roadmap toward high-impact capabilities."
+    },
+    {
+      "title": "Technical PM / AI PM / Platform PM",
+      "company": "UPL Ltd",
+      "years": 2,
+      "domain": "Agentic AI, MLOps, OCR/Document Processing, Machine Learning, Computer Vision, Natural Language Processing (NLP)",
+      "description": "Led and hands-on developed the platform for UPL Genie, a secure enterprise GenAI platform. Designed, built, and rolled out platform RBAC, breaking down work into sprint-ready tasks and aligning teams on access rules for apps/features/data."
+    },
+    {
+      "title": "Data Scientist | Analytics Consultant",
+      "company": "EXL",
+      "years": 1,
+      "domain": "Agentic AI, MLOps, OCR/Document Processing, Machine Learning, Computer Vision, Natural Language Processing (NLP)",
+      "description": "Developed claims coverage predictive model to optimize coverage decisions for a top US insurer. Achieved a 10% reduction in overwrite costs, 13% improvement in decision accuracy, and an 18% reduction in false alerts."
+    },
+    {
+      "title": "Data Scientist",
+      "company": "GoMechanic",
+      "years": 2,
+      "domain": "Agentic AI, MLOps, OCR/Document Processing, Machine Learning, Computer Vision, Natural Language Processing (NLP)",
+      "description": "Built & annotated multiple datasets of 7000+ images to facilitate accurate model training. Designed and implemented multiple Computer Vision models to tackle distinct challenges, including Car Orientation Detection, Car Color Detection, Car Part Detection, and Damage Type Detection."
+    },
+    {
+      "title": "Junior Research Fellow",
+      "company": "IIT Jodhpur",
+      "years": 1,
+      "domain": "Agentic AI, MLOps, OCR/Document Processing, Machine Learning, Computer Vision, Natural Language Processing (NLP)",
+      "description": "Implemented Neural Architecture Search to discover the optimal CNN architecture for a given dataset. Achieved a successful balance between accuracy and parameter count using a Genetic Algorithm-based search algorithm."
+    },
+    {
+      "title": "Engineer Trainee",
+      "company": "Infosys",
+      "years": 1,
+      "domain": "Agentic AI, MLOps, OCR/Document Processing, Machine Learning, Computer Vision, Natural Language Processing (NLP)",
+      "description": "Built early foundation in software delivery, SDLC discipline, and cross-team execution in an enterprise environment."
+    }
+  ],
+  "education": [
+    {
+      "degree_level": "MTECH",
+      "field": "COMPUTER SCIENCE ENGINEERING",
+      "institution": "JUIT Waknaghat"
+    },
+    {
+      "degree_level": "BTECH",
+      "field": "COMPUTER SCIENCE ENGINEERING",
+      "institution": "DTU Delhi (formerly, Delhi College of Engineering)"
+    },
+    {
+      "degree_level": "MHRD Scholarship recipient-2",
+      "field": "",
+      "institution": "IIT Jodhpur"
+    }
+  ],
+  "certifications": [
+    "Digital Product Management (Coursera)",
+    "AI Product Management (Coursera)",
+    "Demand Forecasting Automation (Coursera)"
+  ],
+  "projects": [
+    {
+      "title": "UPL Genie - Enterprise GenAI Platform",
+      "description": "Owned end-to-end product delivery for automated regulatory dossier generation used prior to country-wise filings. Partnered closely with country regulatory teams, aligning daily on requirements, priorities, and rollout readiness."
+    },
+    {
+      "title": "OCR + Invoice Processing (Document AI)",
+      "description": "Built OCR pipelines for processing submitted invoices and extracting structured data. Reduced manual processing effort and improved downstream finance accuracy."
+    }
+  ],
+  "candidate_id": "45d670eb-9f18-4430-93af-94598be0ddb6",
+  "document_id": "a7f05fde-afb0-4d59-9d58-1e6bd281f2d1",
+  "file_name": "Naukri_VibhutiSharma[5y_6m].pdf",
+  "extraction_method": "pdf_text",
+  "extraction_warnings": [],
+  "uploaded_at": "2026-08-13T03:19:48.105238+00:00"
+}
 """,
     "sample_2_longer": """
 Rahul Verma

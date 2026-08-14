@@ -10,6 +10,14 @@ scorer.py — scoring engine implementing the agreed methodology:
 
 Produces a score record matching the Phase 1 schema, including hard_gate_failed
 and hard_gate_reason for explainability.
+
+CHANGE (this revision): experience, projects, and education now return itemized
+evidence rows (one per role / project / requirement) instead of just a score + a
+one-line notes string. Previously the frontend's Evidence panel had nothing to
+render for these three categories — only the four skill-list categories produced
+per-item evidence via _build_evidence — which is why they showed up disabled/empty
+in the UI. category_scores keeps its existing shape (score + notes) unchanged for
+backward compatibility; the new itemized data lives only in the evidence dict.
 """
 
 from datetime import datetime, timezone
@@ -44,8 +52,34 @@ def _jd_context_text(jd_data: dict) -> str:
     return f"{role_title}. Key skills: {', '.join(skills)}." if (role_title or skills) else ""
 
 
-def _score_experience(candidate_data: dict, jd_data: dict, embed_fn) -> tuple[float, str]:
-    """Years matched/exceeded (50%) + role-title/domain semantic relevance (50%) of the category weight."""
+def _relevance_status(sim: float) -> str:
+    """
+    Maps a raw free-text cosine similarity to the same 3-state status used by the
+    skill-evidence rows (matched/weak_match/missing), using the TEXT_SIM band —
+    the wider band calibrated for free-text-vs-free-text comparison (experience/
+    project descriptions), not the tighter SEM band used for short skill phrases.
+    Kept here (not in matcher.py) since it's specifically about presentation status
+    for the experience/projects evidence rows, same role _build_evidence plays for
+    the skill-list categories.
+    """
+    from matcher import TEXT_SIM_LOW, TEXT_SIM_HIGH
+    if sim >= TEXT_SIM_HIGH:
+        return "matched"
+    if sim >= TEXT_SIM_LOW:
+        return "weak_match"
+    return "missing"
+
+
+def _score_experience(candidate_data: dict, jd_data: dict, embed_fn) -> tuple[float, str, dict]:
+    """
+    Years matched/exceeded (50%) + role-title/domain semantic relevance (50%) of the
+    category weight.
+
+    Now also returns itemized evidence: one row per experience entry (title, company,
+    duration, relevance similarity, status), sorted most-to-least relevant, plus a
+    separate "years" summary row — so the frontend can show exactly WHICH roles
+    contributed to the experience score and why, not just a single aggregate number.
+    """
     min_years = jd_data.get("min_years_experience", 0) or 0
     total_years = candidate_data.get("total_years_experience", 0) or 0
 
@@ -54,12 +88,22 @@ def _score_experience(candidate_data: dict, jd_data: dict, embed_fn) -> tuple[fl
     experience_entries = candidate_data.get("experience", [])
     jd_role_text = f"{jd_data.get('role_title', '')}. {_jd_context_text(jd_data)}"
 
+    role_evidence = []
     best_relevance = 0.0
     for entry in experience_entries:
         entry_text = f"{entry.get('title', '')} in {entry.get('domain', '')}: {entry.get('description', '')}"
         sim = semantic_similarity_score(jd_role_text, entry_text, embed_fn)
         if sim > best_relevance:
             best_relevance = sim
+        role_evidence.append({
+            "title": entry.get("title", ""),
+            "company": entry.get("company", ""),
+            "duration": f"{entry.get('start_date_raw', '')} - {entry.get('end_date_raw', '')}",
+            "relevance_similarity": round(sim, 3),
+            "status": _relevance_status(sim),
+        })
+    role_evidence.sort(key=lambda r: r["relevance_similarity"], reverse=True)
+
     # Free-text comparison (JD context vs a full experience description) -> use the
     # TEXT_SIM band, not the tighter SEM band used for short skill-to-skill matching.
     from matcher import TEXT_SIM_LOW, TEXT_SIM_HIGH
@@ -73,54 +117,94 @@ def _score_experience(candidate_data: dict, jd_data: dict, embed_fn) -> tuple[fl
     category_fraction = 0.5 * years_fraction + 0.5 * relevance_fraction
     score = category_fraction * WEIGHTS["relevant_experience"] * 100
     notes = f"{total_years} yrs vs {min_years} required; best role-relevance similarity {round(best_relevance, 3)}"
-    return round(score, 2), notes
+
+    years_evidence = {
+        "total_years_experience": total_years,
+        "min_years_required": min_years,
+        "status": "matched" if years_fraction >= 1.0 else ("weak_match" if years_fraction > 0 else "missing"),
+    }
+
+    return round(score, 2), notes, {"roles": role_evidence, "years": years_evidence}
 
 
-def _score_projects(candidate_data: dict, jd_data: dict, embed_fn) -> tuple[float, str]:
+def _score_projects(candidate_data: dict, jd_data: dict, embed_fn) -> tuple[float, str, list]:
+    """
+    Semantic similarity of each project's description vs. the JD context text.
+
+    Now also returns itemized evidence: one row per project (title, relevance
+    similarity, status), sorted most-to-least relevant, so the frontend can show
+    which specific projects were considered rather than just the best-match score.
+    """
     context_text = _jd_context_text(jd_data)
     projects = candidate_data.get("projects", [])
     if not projects or not context_text:
-        return 0.0, "No projects or JD context to compare"
+        return 0.0, "No projects or JD context to compare", []
 
     from matcher import TEXT_SIM_LOW, TEXT_SIM_HIGH
+    project_evidence = []
     best_sim = 0.0
     for p in projects:
         sim = semantic_similarity_score(context_text, p.get("description", ""), embed_fn)
         if sim > best_sim:
             best_sim = sim
+        project_evidence.append({
+            "title": p.get("title", ""),
+            "relevance_similarity": round(sim, 3),
+            "status": _relevance_status(sim),
+        })
+    project_evidence.sort(key=lambda r: r["relevance_similarity"], reverse=True)
+
     fraction = 0.0 if best_sim < TEXT_SIM_LOW else (1.0 if best_sim >= TEXT_SIM_HIGH else (best_sim - TEXT_SIM_LOW) / (TEXT_SIM_HIGH - TEXT_SIM_LOW))
     score = fraction * WEIGHTS["projects"] * 100
-    return round(score, 2), f"Best project-to-JD-context similarity {round(best_sim, 3)}"
+    notes = f"Best project-to-JD-context similarity {round(best_sim, 3)}"
+    return round(score, 2), notes, project_evidence
 
 
-def _score_education(candidate_data: dict, jd_data: dict) -> tuple[float, str]:
+def _score_education(candidate_data: dict, jd_data: dict) -> tuple[float, str, list]:
+    """
+    Degree match against JD education_requirements.
+
+    Now also returns itemized evidence: one row per required education criterion
+    (required field/level + whether it was matched), instead of just the aggregate
+    "N/M required education criteria met" notes string.
+    """
     requirements = jd_data.get("education_requirements", [])
     candidate_edu = candidate_data.get("education", [])
     if not requirements:
-        return WEIGHTS["education"] * 100, "No specific education requirement in JD"
+        return WEIGHTS["education"] * 100, "No specific education requirement in JD", []
 
     candidate_fields = [_norm(e.get("field", "")) for e in candidate_edu]
     candidate_levels = [_norm(e.get("degree_level", "")) for e in candidate_edu]
 
+    education_evidence = []
     matched_required = 0
     total_required = 0
     for req in requirements:
         if not req.get("required", False):
             continue
         total_required += 1
-        field_match = _norm(req.get("field", "")) in candidate_fields or any(
-            _norm(req.get("field", "")) in cf for cf in candidate_fields
+        req_field_norm = _norm(req.get("field", ""))
+        field_match = req_field_norm in candidate_fields or any(
+            req_field_norm in cf for cf in candidate_fields
         )
         level_match = _norm(req.get("degree_level", "")) in candidate_levels
-        if field_match and level_match:
+        matched = field_match and level_match
+        if matched:
             matched_required += 1
 
+        education_evidence.append({
+            "required_field": req.get("field", ""),
+            "required_degree_level": req.get("degree_level", ""),
+            "status": "matched" if matched else "missing",
+        })
+
     if total_required == 0:
-        return WEIGHTS["education"] * 100, "No hard-required education entries"
+        return WEIGHTS["education"] * 100, "No hard-required education entries", []
 
     fraction = matched_required / total_required
     score = fraction * WEIGHTS["education"] * 100
-    return round(score, 2), f"{matched_required}/{total_required} required education criteria met"
+    notes = f"{matched_required}/{total_required} required education criteria met"
+    return round(score, 2), notes, education_evidence
 
 
 def _norm(s: str) -> str:
@@ -205,13 +289,13 @@ def calculate_job_fit(candidate_data: dict, jd_data: dict, embed_fn=get_embeddin
     cert_score = cert_result["average_contribution"] * WEIGHTS["certifications_other"] * 100
 
     # --- Relevant Experience ---
-    experience_score, experience_notes = _score_experience(candidate_data, jd_data, embed_fn)
+    experience_score, experience_notes, experience_evidence = _score_experience(candidate_data, jd_data, embed_fn)
 
     # --- Projects ---
-    projects_score, projects_notes = _score_projects(candidate_data, jd_data, embed_fn)
+    projects_score, projects_notes, projects_evidence = _score_projects(candidate_data, jd_data, embed_fn)
 
     # --- Education ---
-    education_score, education_notes = _score_education(candidate_data, jd_data)
+    education_score, education_notes, education_evidence = _score_education(candidate_data, jd_data)
 
     category_scores = {
         "mandatory_skills": {
@@ -234,13 +318,19 @@ def calculate_job_fit(candidate_data: dict, jd_data: dict, embed_fn=get_embeddin
 
     # Evidence view for HR-facing candidate detail pages: per-category matched/weak/missing
     # rows with 3-state status for green/amber/red display, plus a neutral "extra skills"
-    # bucket for candidate skills the JD never asked about. Built from the same per-skill
-    # results already computed above — no extra scoring work, just reshaped for display.
+    # bucket for candidate skills the JD never asked about.
+    #
+    # experience / projects / education now carry itemized rows too (previously these three
+    # only had a score + notes string in category_scores, with nothing for the evidence
+    # panel to render — that's why they showed disabled/empty in the frontend).
     evidence = {
         "mandatory_skills": _build_evidence("mandatory_skills", mandatory_result),
         "technical_preferred_skills": _build_evidence("technical_preferred_skills", tech_result),
         "preferred_skills_soft": _build_evidence("preferred_skills_soft", soft_result),
         "certifications_other": _build_evidence("certifications_other", cert_result),
+        "experience": experience_evidence,        # {"roles": [...], "years": {...}}
+        "projects": projects_evidence,             # [{"title", "relevance_similarity", "status"}, ...]
+        "education": education_evidence,           # [{"required_field", "required_degree_level", "status"}, ...]
         "additional_candidate_skills": _extra_candidate_skills(
             candidate_skills, mandatory_result, tech_result, soft_result
         ),

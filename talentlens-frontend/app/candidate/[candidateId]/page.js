@@ -9,7 +9,7 @@ import Pill from "../../../components/Pill";
 import {
   statusFor,
   rankAll,
-  evidenceList,
+  evidenceSections,
   explainRank,
   CATEGORY_MAX,
   CATEGORY_LABELS,
@@ -28,6 +28,55 @@ export default function CandidateDetailPage({ params }) {
     >
       <CandidateDetail params={params} />
     </Suspense>
+  );
+}
+
+// Same small rounded chip shape as JDSummaryCard's requirement pills (.tag class),
+// recolored by match status instead of mandatory/preferred. Full detail (match type,
+// matched-against, relevance score, duration) sits in the title attribute as a hover
+// tooltip so the chip itself stays compact, same as a JD requirement pill.
+const STATUS_CHIP_STYLE = {
+  matched: { background: "#12362b", color: "#67e19b" },
+  weak_match: { background: "#3a2e18", color: "#f6c66c" },
+  missing: { background: "#3a1f27", color: "#ff8192" },
+};
+
+const STATUS_ICON = {
+  matched: "✓",
+  weak_match: "~",
+  missing: "×",
+};
+
+function EvidenceChip({ status, label, detail }) {
+  const style = STATUS_CHIP_STYLE[status] || { background: "#14332f", color: "var(--a)" };
+  const icon = STATUS_ICON[status] || "";
+  return (
+    <span className="tag" style={{ ...style, fontWeight: 600 }} title={detail || undefined}>
+      {icon} {label}
+    </span>
+  );
+}
+
+function EvidenceSection({ title, emptyMessage, children }) {
+  return (
+    <div className="evidence-section">
+      <h4
+        style={{
+          color: "var(--m)",
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 0.5,
+          margin: "16px 0 8px",
+        }}
+      >
+        {title}
+      </h4>
+      {emptyMessage ? (
+        <div className="muted">{emptyMessage}</div>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{children}</div>
+      )}
+    </div>
   );
 }
 
@@ -108,7 +157,7 @@ function CandidateDetail({ params }) {
   }
 
   const status = statusFor(record.final_score);
-  const evidence = evidenceList(record);
+  const sections = evidenceSections(record);
   const explanation = explainRank(record, roleTitle);
   const ringGradient = `conic-gradient(var(--a) 0 ${record.final_score}%, #173047 ${record.final_score}%)`;
 
@@ -168,22 +217,76 @@ function CandidateDetail({ params }) {
             <h3>Evidence</h3>
           </div>
           <div className="body">
-            <div className="reqs">
-              {evidence.length === 0 && <div className="muted">No skill-based evidence recorded.</div>}
-              {evidence.map((item, i) => (
-                <div
-                  className="match"
-                  key={i}
-                  style={{ borderLeft: `3px solid ${item.matched ? "var(--g)" : "var(--r)"}` }}
-                >
-                  {item.matched ? "✓" : "×"} {item.skill}{" "}
-                  <span style={{ color: "var(--m)", fontSize: 11 }}>
-                    — {item.category}
-                    {item.matched ? " match" : " not found in resume evidence"}
-                  </span>
-                </div>
+            {sections.skillSections.map((section) => (
+              <EvidenceSection
+                title={section.label}
+                key={section.key}
+                emptyMessage={section.items.length === 0 ? "No requirements in this category." : null}
+              >
+                {section.items.map((item, i) => (
+                  <EvidenceChip
+                    key={i}
+                    status={item.status}
+                    label={item.label}
+                    detail={
+                      item.detail ||
+                      (item.status === "missing" ? "Not found in resume evidence" : item.matchType)
+                    }
+                  />
+                ))}
+              </EvidenceSection>
+            ))}
+
+            <EvidenceSection title="Experience">
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {sections.experience.years && (
+                  <EvidenceChip
+                    status={sections.experience.years.status}
+                    label={`${sections.experience.years.total_years_experience} yrs total`}
+                    detail={`${sections.experience.years.min_years_required} yrs required`}
+                  />
+                )}
+                {sections.experience.roles.map((r, i) => (
+                  <EvidenceChip
+                    key={i}
+                    status={r.status}
+                    label={r.label}
+                    detail={[r.detail, `relevance ${r.similarity}`].filter(Boolean).join(" · ")}
+                  />
+                ))}
+              </div>
+              {sections.experience.roles.length === 0 && !sections.experience.years && (
+                <div className="muted" style={{ marginTop: 6 }}>No experience entries recorded.</div>
+              )}
+            </EvidenceSection>
+
+            <EvidenceSection
+              title="Projects"
+              emptyMessage={sections.projects.length === 0 ? "No projects listed." : null}
+            >
+              {sections.projects.map((p, i) => (
+                <EvidenceChip key={i} status={p.status} label={p.label} detail={`relevance ${p.similarity}`} />
               ))}
-            </div>
+            </EvidenceSection>
+
+            <EvidenceSection
+              title="Education"
+              emptyMessage={sections.education.length === 0 ? "No specific education requirement in JD." : null}
+            >
+              {sections.education.map((e, i) => (
+                <EvidenceChip key={i} status={e.status} label={e.label} />
+              ))}
+            </EvidenceSection>
+
+            {sections.additionalSkills.length > 0 && (
+              <EvidenceSection title="Additional candidate skills">
+                {sections.additionalSkills.map((skill, i) => (
+                  <span key={i} className="tag pref">
+                    {skill}
+                  </span>
+                ))}
+              </EvidenceSection>
+            )}
           </div>
         </div>
         <div className="panel">
