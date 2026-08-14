@@ -82,12 +82,16 @@ def upload_jd(file: UploadFile = File(...)):
         raise HTTPException(500, f"Failed to process JD: {str(e)}")
 
     db.insert_jd(record)
+    # extraction_warnings is intentionally NOT included here — those are extraction-quality
+    # signals for whoever runs the pipeline (already logged server-side by jd_extractor.py),
+    # not candidate/role-facing data. The full record (including extraction_warnings) is
+    # still in the DB via db.insert_jd() above if an admin/debug view ever wants it —
+    # GET /jds/{role_id} exposes that full record already.
     return {
         "role_id": record["role_id"],
         "role_title": record.get("role_title", ""),
         "document_id": record["document_id"],
         "extraction_method": record["extraction_method"],
-        "extraction_warnings": record["extraction_warnings"],
     }
 
 
@@ -145,13 +149,14 @@ def upload_resumes(files: List[UploadFile] = File(...)):
         try:
             record = ingest_resume(path)
             db.insert_resume(record)
+            # extraction_warnings intentionally NOT included in the frontend-facing result —
+            # already logged server-side by extractor.py, and still in the full DB record.
             return {
                 "type": "result",
                 "file_name": file_name,
                 "status": "ok",
                 "candidate_id": record["candidate_id"],
                 "candidate_name": record.get("candidate_name", ""),
-                "extraction_warnings": record["extraction_warnings"],
             }
         except Exception as e:
             return {"type": "result", "file_name": file_name, "status": "failed", "error": str(e)}
