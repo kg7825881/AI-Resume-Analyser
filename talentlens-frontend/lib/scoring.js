@@ -4,28 +4,22 @@
 
 // Max points per category, mirroring scorer.py's WEIGHTS * 100.
 export const CATEGORY_MAX = {
-  mandatory_skills: 35,
-  relevant_experience: 25,
-  technical_preferred_skills: 15,
-  projects: 10,
-  education: 5,
-  preferred_skills_soft: 5,
-  certifications_other: 5,
+  mandatory_skills: 50,
+  relevant_experience: 30,
+  education: 10,
+  preferred_skills: 10,
 };
 
 export const CATEGORY_LABELS = {
   mandatory_skills: "Mandatory skills",
   relevant_experience: "Experience",
-  technical_preferred_skills: "Technical skills",
-  projects: "Projects",
   education: "Education",
-  preferred_skills_soft: "Preferred",
-  certifications_other: "Certifications",
+  preferred_skills: "Preferred skills",
 };
 
 // Shared 3-state status → accent color, used by the Evidence panel's sub-sections.
 // "weak_match" covers a semantic hit too soft to clear the hard-gate threshold
-// (see GATE_MIN_CONTRIBUTION in matcher.py) — distinct from a confident match.
+// distinct from a confident match.
 export const STATUS_COLOR = {
   matched: "var(--g)",
   weak_match: "#f5bd62",
@@ -71,21 +65,20 @@ export function topEvidence(record, limit = 3) {
   const cs = record.category_scores || {};
   const pool = [
     ...(cs.mandatory_skills?.matched || []),
-    ...(cs.technical_preferred_skills?.matched || []),
+    ...(cs.preferred_skills?.matched || []),
   ];
   return pool.slice(0, limit).join(" · ");
 }
 
 /**
- * Every matched skill across all skill-based categories (mandatory, technical/preferred,
- * soft preferred), deduplicated. Used for the "Skills matched" comparison field.
+ * Every matched skill across all skill-based categories (mandatory, preferred),
+ * deduplicated. Used for the "Skills matched" comparison field.
  */
 export function allMatchedSkills(record) {
   const cs = record.category_scores || {};
   const pool = [
     ...(cs.mandatory_skills?.matched || []),
-    ...(cs.technical_preferred_skills?.matched || []),
-    ...(cs.preferred_skills_soft?.matched || []),
+    ...(cs.preferred_skills?.matched || []),
   ];
   return [...new Set(pool)];
 }
@@ -103,9 +96,7 @@ export function evidenceList(record) {
   const cs = record.category_scores || {};
   const cats = [
     ["mandatory_skills", "Mandatory"],
-    ["technical_preferred_skills", "Technical"],
-    ["preferred_skills_soft", "Preferred"],
-    ["certifications_other", "Certification"],
+    ["preferred_skills", "Preferred"],
   ];
   const items = [];
   for (const [key, label] of cats) {
@@ -140,7 +131,6 @@ function mapSkillRow(r) {
  *   skillSections: [{ key, label, items: [{ label, status, detail, matchType }] }],
  *   experience: { years: { total_years_experience, min_years_required, status } | null,
  *                 roles: [{ label, detail, status, similarity }] },
- *   projects: [{ label, status, similarity }],
  *   education: [{ label, status }],
  *   additionalSkills: string[],
  * }
@@ -150,13 +140,7 @@ export function evidenceSections(record) {
 
   const skillSections = [
     { key: "mandatory_skills", label: "Mandatory skills", items: (ev.mandatory_skills || []).map(mapSkillRow) },
-    {
-      key: "technical_preferred_skills",
-      label: "Technical skills",
-      items: (ev.technical_preferred_skills || []).map(mapSkillRow),
-    },
-    { key: "preferred_skills_soft", label: "Preferred skills", items: (ev.preferred_skills_soft || []).map(mapSkillRow) },
-    { key: "certifications_other", label: "Certifications", items: (ev.certifications_other || []).map(mapSkillRow) },
+    { key: "preferred_skills", label: "Preferred skills", items: (ev.preferred_skills || []).map(mapSkillRow) },
   ];
 
   const experienceEv = ev.experience || {};
@@ -167,12 +151,6 @@ export function evidenceSections(record) {
     similarity: r.relevance_similarity,
   }));
 
-  const projectItems = (ev.projects || []).map((p) => ({
-    label: p.title || "Project",
-    status: p.status,
-    similarity: p.relevance_similarity,
-  }));
-
   const educationItems = (ev.education || []).map((e) => ({
     label: [e.required_degree_level, e.required_field].filter(Boolean).join(" in ") || "Requirement",
     status: e.status,
@@ -181,7 +159,6 @@ export function evidenceSections(record) {
   return {
     skillSections,
     experience: { years: experienceEv.years || null, roles: experienceRoles },
-    projects: projectItems,
     education: educationItems,
     additionalSkills: ev.additional_candidate_skills || [],
   };
@@ -190,16 +167,6 @@ export function evidenceSections(record) {
 export function formatEducation(education) {
   if (!education || education.length === 0) return "—";
   return education.map((e) => [e.degree_level, e.field].filter(Boolean).join(" — ")).join(", ");
-}
-
-export function formatCertifications(certifications) {
-  if (!certifications || certifications.length === 0) return "—";
-  return certifications.join(", ");
-}
-
-export function formatProjects(projects) {
-  if (!projects || projects.length === 0) return "—";
-  return projects.map((p) => p.title).filter(Boolean).join(", ");
 }
 
 /** Grounded, template-built explanation of a candidate's rank — built only from fields the API returned. */

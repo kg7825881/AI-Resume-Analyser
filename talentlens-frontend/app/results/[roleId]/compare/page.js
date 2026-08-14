@@ -9,8 +9,6 @@ import {
   rankAll,
   mostRecentRole,
   formatEducation,
-  formatCertifications,
-  formatProjects,
 } from "../../../../lib/scoring";
 
 const THRESHOLD = 75;
@@ -220,10 +218,7 @@ export default function ComparisonPage({ params }) {
                       Preferred skills matched
                     </td>
                     {qualified.map((r) => {
-                      const preferred = [
-                        ...(r.category_scores?.technical_preferred_skills?.matched || []),
-                        ...(r.category_scores?.preferred_skills_soft?.matched || []),
-                      ];
+                      const preferred = r.category_scores?.preferred_skills?.matched || [];
                       return (
                         <td key={r.candidate_id}>
                           <SkillPills skills={preferred} variant="preferred" />

@@ -261,15 +261,6 @@ function CandidateDetail({ params }) {
             </EvidenceSection>
 
             <EvidenceSection
-              title="Projects"
-              emptyMessage={sections.projects.length === 0 ? "No projects listed." : null}
-            >
-              {sections.projects.map((p, i) => (
-                <EvidenceChip key={i} status={p.status} label={p.label} detail={`relevance ${p.similarity}`} />
-              ))}
-            </EvidenceSection>
-
-            <EvidenceSection
               title="Education"
               emptyMessage={sections.education.length === 0 ? "No specific education requirement in JD." : null}
             >
