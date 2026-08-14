@@ -3,6 +3,19 @@ import json
 import ollama
 from extractor import extract_text
 from common import new_id, now_iso, slugify
+from jd_skills import atomize_skill_list
+
+# JD fields that hold discrete, individually-matchable skill/tool/cert names — these
+# get the deterministic atomic-splitting pass. "responsibilities" is deliberately
+# excluded: scorer.py treats it as free text for semantic-similarity comparison against
+# candidate projects/experience, not as a per-item exact-match list, so splitting it
+# would only lose the sentence context that comparison relies on.
+_ATOMIC_SKILL_FIELDS = (
+    "mandatory_skills",
+    "preferred_technical_skills",
+    "soft_preferred_skills",
+    "relevant_certifications",
+)
 
 # Data path set to local Kaggle directory
 DATA_DIR = os.path.expanduser("~/kaggle/input/talentlens-batch/")
@@ -74,10 +87,20 @@ def extract_structured_jd(jd_text):
     raw_output = response['message']['content']
 
     try:
-        return json.loads(raw_output)
+        structured = json.loads(raw_output)
     except json.JSONDecodeError:
         print("\n[WARNING] Model failed to return a complete JSON object. Returning raw text.")
         return {"error": "Incomplete JSON", "raw_output": raw_output}
+
+    # Deterministic safety net, run regardless of whether the model followed the
+    # ATOMIC SKILL EXTRACTION instructions above — confirmed in production it doesn't
+    # always (e.g. "Strong SQL and good Python skills." coming through as one unsplit
+    # item). See jd_skills.py for what this does and does not attempt to split.
+    for field in _ATOMIC_SKILL_FIELDS:
+        if field in structured and isinstance(structured[field], list):
+            structured[field] = atomize_skill_list(structured[field])
+
+    return structured
 
 
 def ingest_jd(file_path: str) -> dict:

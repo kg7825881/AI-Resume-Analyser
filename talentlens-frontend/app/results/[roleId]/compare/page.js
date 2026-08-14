@@ -7,7 +7,6 @@ import { useAppState } from "../../../providers";
 import {
   initials,
   rankAll,
-  allMatchedSkills,
   mostRecentRole,
   formatEducation,
   formatCertifications,
@@ -18,6 +17,30 @@ const THRESHOLD = 75;
 
 // Rotating accent colors so each candidate's column reads as visually distinct at a glance.
 const COLUMN_ACCENTS = ["#55d6c2", "#7c8cff", "#f5bd62", "#57d38c", "#ff7185", "#8ea4bb"];
+
+// Same pill treatment as JDSummaryCard.js — solid var(--b) for mandatory (this candidate
+// actually matched a hard requirement), plain "tag pref" for preferred/soft (nice-to-have,
+// lower-stakes visually too). Kept local since it's only used in this one table.
+function SkillPills({ skills, variant }) {
+  if (!skills || skills.length === 0) return <span style={{ color: "var(--m)" }}>—</span>;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      {skills.map((skill) => (
+        <span
+          key={skill}
+          className={variant === "mandatory" ? "tag" : "tag pref"}
+          style={
+            variant === "mandatory"
+              ? { background: "var(--b)", color: "#fff", fontWeight: 600 }
+              : undefined
+          }
+        >
+          {skill}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export default function ComparisonPage({ params }) {
   const { roleId } = params;
@@ -181,27 +204,32 @@ export default function ComparisonPage({ params }) {
                   </tr>
                   <tr>
                     <td style={{ position: "sticky", left: 0, background: "var(--p)", fontWeight: 700 }}>
-                      Skills matched
+                      Mandatory skills matched
                     </td>
                     {qualified.map((r) => (
-                      <td key={r.candidate_id}>{allMatchedSkills(r).join(", ") || "—"}</td>
+                      <td key={r.candidate_id}>
+                        <SkillPills
+                          skills={r.category_scores?.mandatory_skills?.matched}
+                          variant="mandatory"
+                        />
+                      </td>
                     ))}
                   </tr>
                   <tr>
                     <td style={{ position: "sticky", left: 0, background: "var(--p)", fontWeight: 700 }}>
-                      Projects
+                      Preferred skills matched
                     </td>
-                    {qualified.map((r) => (
-                      <td key={r.candidate_id}>{formatProjects(r.projects)}</td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <td style={{ position: "sticky", left: 0, background: "var(--p)", fontWeight: 700 }}>
-                      Certifications
-                    </td>
-                    {qualified.map((r) => (
-                      <td key={r.candidate_id}>{formatCertifications(r.certifications)}</td>
-                    ))}
+                    {qualified.map((r) => {
+                      const preferred = [
+                        ...(r.category_scores?.technical_preferred_skills?.matched || []),
+                        ...(r.category_scores?.preferred_skills_soft?.matched || []),
+                      ];
+                      return (
+                        <td key={r.candidate_id}>
+                          <SkillPills skills={preferred} variant="preferred" />
+                        </td>
+                      );
+                    })}
                   </tr>
                 </tbody>
               </table>
