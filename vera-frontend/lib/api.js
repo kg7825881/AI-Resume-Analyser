@@ -8,7 +8,14 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
 async function request(path, options = {}) {
   let res;
   try {
-    res = await fetch(`${BASE_URL}${path}`, options);
+    // CHANGE 1: Added headers merge to include ngrok bypass
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        ...options.headers,
+        "ngrok-skip-browser-warning": "1",
+      },
+    });
   } catch (err) {
     throw new Error(
       `Couldn't reach the TalentLens API at ${BASE_URL}. Is the backend running (uvicorn api:app --reload)?`
@@ -66,7 +73,14 @@ export async function uploadResumesStreaming(files, onEvent) {
 
   let res;
   try {
-    res = await fetch(`${BASE_URL}/resumes/upload`, { method: "POST", body: form });
+    // CHANGE 2: Added headers object to include ngrok bypass
+    res = await fetch(`${BASE_URL}/resumes/upload`, { 
+      method: "POST", 
+      body: form,
+      headers: {
+        "ngrok-skip-browser-warning": "1",
+      },
+    });
   } catch (err) {
     throw new Error(
       `Couldn't reach the TalentLens API at ${BASE_URL}. Is the backend running (uvicorn api:app --reload)?`
