@@ -13,7 +13,7 @@ import json
 import os
 from contextlib import contextmanager
 
-DB_PATH = os.environ.get("TALENTLENS_DB_PATH", "talentlens.db")
+DB_PATH = os.environ.get("TALENTLENS_DB_PATH", "VERA.db")
 
 
 def init_db():

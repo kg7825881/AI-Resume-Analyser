@@ -86,7 +86,7 @@ pip install -r requirements.txt
 uvicorn api:app --reload
 ```
 
-The backend will run at `http://localhost:8000`. The SQLite database (`ELIAS.db`) and local `storage/` directories for resumes and JDs will be created automatically on startup.
+The backend will run at `http://localhost:8000`. The SQLite database (`VERA.db`) and local `storage/` directories for resumes and JDs will be created automatically on startup.
 
 ### 2. Frontend Setup
 
@@ -121,6 +121,57 @@ npm install
 
 The frontend dashboard will be accessible at `http://localhost:3000`.
 
+
+## 🐳 Running with Docker (Recommended)
+ 
+1. **Configure Ollama for Docker access (macOS):**
+```bash
+   launchctl setenv OLLAMA_HOST "0.0.0.0"
+   # Quit Ollama from menu bar and restart it
+```
+ 
+2. **Build the image:**
+```bash
+   cd vera-engine
+   docker build -t resume-analyzer-backend .
+```
+ 
+3. **Run the container with persistent volumes & live reload:**
+```bash
+   docker run -d \
+     --name ai-backend \
+     -p 8000:8000 \
+     -v "$(pwd):/app" \
+     -e OLLAMA_HOST="http://host.docker.internal:11434" \
+     -e TALENTLENS_FRONTEND_ORIGINS="*" \
+     resume-analyzer-backend \
+     uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+```
+ 
+ 
+## 🌐 Cloud Deployment (Vercel + Local Tunnel)
+ 
+1. **Expose Local Backend:**
+```bash
+   ngrok http 8000
+```
+ 
+2. **Deploy Frontend on Vercel:**
+   * Import repo and set Root Directory to `vera-frontend`.
+   * Set Environment Variable:
+     * `NEXT_PUBLIC_API_BASE_URL`: `https://your-ngrok-url.ngrok-free.dev`
+3. **Configure Backend CORS:**
+   * Pass your Vercel deployment URL into `TALENTLENS_FRONTEND_ORIGINS`.
+
+ 
+## ⚙️ Environment Variables Reference
+ 
+| Variable | Scope | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `NEXT_PUBLIC_API_BASE_URL` | Frontend | Base URL for FastAPI backend | `http://localhost:8000` |
+| `OLLAMA_HOST` | Backend | Host address for Ollama instance | `http://127.0.0.1:11434` |
+| `TALENTLENS_FRONTEND_ORIGINS` | Backend | Allowed CORS origins (comma-separated) | `http://localhost:3000` |
+ 
 
 ## 📖 Usage & Workflows
 
